@@ -1,0 +1,334 @@
+-- Script taken from https://xenoscripts.com website --
+-- Safe Client-Side Aimbot with Professional GUI
+-- "🕶️ | ToddySevenX | 🕶️"
+
+-- Services
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local CoreGui = game:GetService("CoreGui")
+local LocalPlayer = Players.LocalPlayer
+local Camera = workspace.CurrentCamera
+
+-- AIMBOT CONFIG
+local Aimbot = {
+    Enabled = false,
+    FOV = 150,
+    Smoothness = 0.12,
+    TargetPart = "Head",
+    TeamCheck = false,
+    ShowFOV = false
+}
+
+local AimToggle = false  -- Toggle cho mobile/PC
+
+-- FOV Circle
+local FOVCircle = Drawing.new("Circle")
+FOVCircle.Radius = Aimbot.FOV
+FOVCircle.Color = Color3.fromRGB(255,0,0)
+FOVCircle.Thickness = 1
+FOVCircle.Filled = false
+FOVCircle.NumSides = 32
+FOVCircle.Visible = Aimbot.ShowFOV
+
+-- HELPERS
+local function IsOnScreen(part)
+    if not part then return false end
+    local p, onScreen = Camera:WorldToViewportPoint(part.Position)
+    return onScreen, p
+end
+
+local function IsPlayerAlive(player)
+    local humanoid = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+    return humanoid and humanoid.Health > 0
+end
+
+-- ⭐ KIỂM TRA KHÔNG AIM XUYÊN TƯỜNG ⭐
+local function IsVisible(part)
+    if not part then return false end
+
+    local origin = Camera.CFrame.Position
+    local direction = (part.Position - origin).Unit * 5000
+
+    local params = RaycastParams.new()
+    params.FilterType = Enum.RaycastFilterType.Blacklist
+    params.FilterDescendantsInstances = {LocalPlayer.Character}
+
+    local result = workspace:Raycast(origin, direction, params)
+
+    if result and result.Instance and result.Instance:IsDescendantOf(part.Parent) then
+        return true
+    end
+
+    return false
+end
+
+local function GetClosestTarget()
+    local closestDist = Aimbot.FOV
+    local targetPlayer, targetPart = nil, nil
+    local centerScreen = Vector2.new(Camera.ViewportSize.X/2, Camera.ViewportSize.Y/2)
+
+    for _, player in pairs(Players:GetPlayers()) do
+        if player == LocalPlayer then continue end
+        if not player.Character then continue end
+        local part = player.Character:FindFirstChild(Aimbot.TargetPart)
+        if not part then continue end
+        if Aimbot.TeamCheck and player.Team == LocalPlayer.Team then continue end
+        if not IsPlayerAlive(player) then continue end
+
+        local onScreen, screenPos = IsOnScreen(part)
+        if not onScreen then continue end
+
+        local dist = (Vector2.new(screenPos.X, screenPos.Y) - centerScreen).Magnitude
+
+        -- Không aim xuyên tường
+        if dist < closestDist and IsVisible(part) then
+            closestDist = dist
+            targetPlayer = player
+            targetPart = part
+        end
+    end
+
+    return targetPlayer, targetPart
+end
+
+local function SmoothAimToTargetPart(targetPart, smoothAlpha)
+    if not targetPart or not targetPart.Parent then return end
+    local camPos = Camera.CFrame.Position
+    local targetPos = targetPart.Position
+    local desired = CFrame.new(camPos, targetPos)
+    Camera.CFrame = Camera.CFrame:Lerp(desired, math.clamp(smoothAlpha, 0.001, 0.999))
+end
+
+-- GUI
+local function createGui()
+    local screenGui = Instance.new("ScreenGui")
+    screenGui.Name = "AimbotByBl__ukeGUI"
+
+    if syn and syn.protect_gui then
+        syn.protect_gui(screenGui)
+        screenGui.Parent = CoreGui
+    elseif gethui then
+        screenGui.Parent = gethui()
+    else
+        screenGui.Parent = CoreGui
+    end
+
+    local main = Instance.new("Frame")
+    main.Size = UDim2.new(0, 320, 0, 260)
+    main.Position = UDim2.new(0.5, -160, 0.5, -130)
+    main.BackgroundColor3 = Color3.fromRGB(30,30,30)
+    main.BorderSizePixel = 0
+    main.Parent = screenGui
+    local mainCorner = Instance.new("UICorner")
+    mainCorner.CornerRadius = UDim.new(0,12)
+    mainCorner.Parent = main
+
+    local topBar = Instance.new("Frame")
+    topBar.Size = UDim2.new(1,0,0,30)
+    topBar.BackgroundColor3 = Color3.fromRGB(45,45,45)
+    topBar.BorderSizePixel = 0
+    topBar.Parent = main
+    local topBarCorner = Instance.new("UICorner")
+    topBarCorner.CornerRadius = UDim.new(0,12)
+    topBarCorner.Parent = topBar
+
+    local title = Instance.new("TextLabel")
+    title.Size = UDim2.new(1,-40,1,0)
+    title.Position = UDim2.new(0,10,0,0)
+    title.BackgroundTransparency = 1
+    title.Text = "🕶️ | ToddySevenX | 🕶️"
+    title.TextColor3 = Color3.fromRGB(255,255,255)
+    title.Font = Enum.Font.SourceSansBold
+    title.TextSize = 16
+    title.TextXAlignment = Enum.TextXAlignment.Left
+    title.Parent = topBar
+
+    -- CLOSE BUTTON
+    local closeBtn = Instance.new("TextButton")
+    closeBtn.Size = UDim2.new(0,25,0,25)
+    closeBtn.Position = UDim2.new(1,-28,0,2)
+    closeBtn.BackgroundColor3 = Color3.fromRGB(200,50,50)
+    closeBtn.Text = "X"
+    closeBtn.TextColor3 = Color3.fromRGB(255,255,255)
+    closeBtn.Font = Enum.Font.SourceSansBold
+    closeBtn.TextSize = 14
+    closeBtn.Parent = topBar
+    local closeCorner = Instance.new("UICorner")
+    closeCorner.CornerRadius = UDim.new(0,8)
+    closeCorner.Parent = closeBtn
+
+    closeBtn.MouseButton1Click:Connect(function()
+        screenGui:Destroy()
+        FOVCircle.Visible = false
+    end)
+
+    -- DRAGGING
+    local dragging, dragInput, dragStart, startPos
+    topBar.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            dragging = true
+            dragStart = input.Position
+            startPos = main.Position
+            input.Changed:Connect(function()
+                if input.UserInputState == Enum.UserInputState.End then
+                    dragging = false
+                end
+            end)
+        end
+    end)
+    topBar.InputChanged:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseMovement then
+            dragInput = input
+        end
+    end)
+    UserInputService.InputChanged:Connect(function(input)
+        if input == dragInput and dragging and dragStart and startPos then
+            local delta = input.Position - dragStart
+            main.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+        end
+    end)
+
+    -- CONTENT
+    local y = 40
+    local function makeLabel(text)
+        local lbl = Instance.new("TextLabel")
+        lbl.Size = UDim2.new(0,140,0,20)
+        lbl.Position = UDim2.new(0,10,0,y)
+        lbl.BackgroundTransparency = 1
+        lbl.Text = text
+        lbl.TextColor3 = Color3.fromRGB(220,220,220)
+        lbl.Font = Enum.Font.SourceSans
+        lbl.TextSize = 14
+        lbl.TextXAlignment = Enum.TextXAlignment.Left
+        lbl.Parent = main
+        return lbl
+    end
+
+    local function makeCheckbox(text, value, callback)
+        local lbl = makeLabel(text)
+        local cb = Instance.new("TextButton")
+        cb.Size = UDim2.new(0,50,0,20)
+        cb.Position = UDim2.new(0,240,0,y)
+        cb.BackgroundColor3 = value and Color3.fromRGB(60,160,60) or Color3.fromRGB(160,60,60)
+        cb.Text = value and "ON" or "OFF"
+        cb.Font = Enum.Font.SourceSansBold
+        cb.TextSize = 14
+        cb.TextColor3 = Color3.fromRGB(255,255,255)
+        cb.Parent = main
+        local cbCorner = Instance.new("UICorner")
+        cbCorner.CornerRadius = UDim.new(0,4)
+        cbCorner.Parent = cb
+
+        cb.MouseButton1Click:Connect(function()
+            value = not value
+            cb.Text = value and "ON" or "OFF"
+            cb.BackgroundColor3 = value and Color3.fromRGB(60,160,60) or Color3.fromRGB(160,60,60)
+            callback(value)
+        end)
+        y = y + 30
+    end
+
+    local function makeSlider(text, minV, maxV, value, callback)
+        local lbl = makeLabel(text)
+        local valLbl = Instance.new("TextLabel")
+        valLbl.Size = UDim2.new(0,40,0,20)
+        valLbl.Position = UDim2.new(0,260,0,y)
+        valLbl.BackgroundTransparency = 1
+        valLbl.Text = tostring(value)
+        valLbl.TextColor3 = Color3.fromRGB(255,255,255)
+        valLbl.Font = Enum.Font.SourceSans
+        valLbl.TextSize = 14
+        valLbl.TextXAlignment = Enum.TextXAlignment.Left
+        valLbl.Parent = main
+
+        local sliderBG = Instance.new("Frame")
+        sliderBG.Size = UDim2.new(0,180,0,10)
+        sliderBG.Position = UDim2.new(0,80,0,y+5)
+        sliderBG.BackgroundColor3 = Color3.fromRGB(70,70,70)
+        sliderBG.BorderSizePixel = 0
+        sliderBG.Parent = main
+        local sliderCorner = Instance.new("UICorner")
+        sliderCorner.CornerRadius = UDim.new(0,5)
+        sliderCorner.Parent = sliderBG
+
+        local knob = Instance.new("Frame")
+        knob.Size = UDim2.new((value-minV)/(maxV-minV),0,1,0)
+        knob.BackgroundColor3 = Color3.fromRGB(140,140,255)
+        knob.BorderSizePixel = 0
+        knob.Parent = sliderBG
+        local knobCorner = Instance.new("UICorner")
+        knobCorner.CornerRadius = UDim.new(0,5)
+        knobCorner.Parent = knob
+
+        local dragging = false
+        sliderBG.InputBegan:Connect(function(input)
+            if input.UserInputType == Enum.UserInputType.MouseButton1 then dragging = true end
+        end)
+        sliderBG.InputEnded:Connect(function(input)
+            if input.UserInputType == Enum.UserInputType.MouseButton1 then dragging = false end
+        end)
+        UserInputService.InputChanged:Connect(function(input)
+            if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
+                local rel = math.clamp(input.Position.X - sliderBG.AbsolutePosition.X,0,sliderBG.AbsoluteSize.X)
+                local frac = rel/sliderBG.AbsoluteSize.X
+                knob.Size = UDim2.new(frac,0,1,0)
+                local v = minV + (maxV-minV)*frac
+                valLbl.Text = string.format("%.2f",v)
+                callback(v)
+            end
+        end)
+        y = y + 36
+    end
+
+    makeCheckbox("Aimbot Enabled", Aimbot.Enabled, function(v) Aimbot.Enabled = v end)
+    makeCheckbox("Team Check", Aimbot.TeamCheck, function(v) Aimbot.TeamCheck = v end)
+    makeCheckbox("Show FOV", Aimbot.ShowFOV, function(v) Aimbot.ShowFOV = v; FOVCircle.Visible=v end)
+    makeSlider("FOV (px)",50,600,Aimbot.FOV,function(v) Aimbot.FOV=v; FOVCircle.Radius=v end)
+    makeSlider("Smoothness",0.01,0.5,Aimbot.Smoothness,function(v) Aimbot.Smoothness=v end)
+
+    -- MOBILE AIM TOGGLE
+    local aimBtn = Instance.new("TextButton")
+    aimBtn.Size = UDim2.new(0,120,0,40)
+    aimBtn.Position = UDim2.new(0.5, -60, 0, y + 10)
+    aimBtn.BackgroundColor3 = Color3.fromRGB(150,50,50)
+    aimBtn.TextColor3 = Color3.fromRGB(255,255,255)
+    aimBtn.Font = Enum.Font.SourceSansBold
+    aimBtn.TextSize = 18
+    aimBtn.Text = "AIM: OFF"
+    aimBtn.Parent = main
+
+    local aimCorner = Instance.new("UICorner")
+    aimCorner.CornerRadius = UDim.new(0,10)
+    aimCorner.Parent = aimBtn
+
+    aimBtn.MouseButton1Click:Connect(function()
+        AimToggle = not AimToggle
+        aimBtn.Text = AimToggle and "AIM: ON" or "AIM: OFF"
+        aimBtn.BackgroundColor3 = AimToggle and Color3.fromRGB(50,150,50) or Color3.fromRGB(150,50,50)
+    end)
+
+    return screenGui
+end
+
+-- SPAWN GUI
+local gui = createGui()
+
+-- MAIN AIMBOT LOOP
+RunService.RenderStepped:Connect(function()
+    if FOVCircle then
+        local viewportSize = Camera.ViewportSize
+        FOVCircle.Position = Vector2.new(viewportSize.X/2, viewportSize.Y/2)
+        FOVCircle.Visible = Aimbot.ShowFOV
+    end
+
+    if Aimbot.Enabled and AimToggle then
+        local targetPlayer, targetPart = GetClosestTarget()
+        if targetPlayer and targetPart then
+            SmoothAimToTargetPart(targetPart, Aimbot.Smoothness)
+        end
+    end
+end)
+
+-- Expose Aimbot table
+_G.__SAFE_AIMBOT = Aimbot
